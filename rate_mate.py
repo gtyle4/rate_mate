@@ -80,58 +80,73 @@ def group_prefix(col):
     return col.split("_")[0]               # e.g. Javelin, 105mm
 
 def build_group_summary(total_req, total_cap, sel_rates, sel_caps):
-    """Build DataFrame summarizing by prefix group."""
+"""Build DataFrame summarizing by prefix group with ceil/floor logic."""
     groups = sorted({ group_prefix(c) for c in sel_rates + sel_caps })
     rows = []
     for grp in groups:
+        # pick all matching rate/cap columns
         grp_rates = [c for c in sel_rates if group_prefix(c)==grp]
         grp_caps  = [c for c in sel_caps  if group_prefix(c)==grp]
-        req_sum = total_req[grp_rates].sum() if grp_rates else 0
-        cap_sum = total_cap[grp_caps].sum()   if grp_caps  else 0
-        surplus = cap_sum - req_sum
 
-        # Bulk vs Wheeled for CL_III
-        bulk_keys  = [c for c in grp_caps if "_bulk_cap"    in c]
-        wheel_keys = [c for c in grp_caps if "_wheeled_cap" in c]
-        bulk_sum   = total_cap[bulk_keys].sum()   if bulk_keys  else None
-        wheel_sum  = total_cap[wheel_keys].sum()  if wheel_keys else None
-        bulk_surp  = (bulk_sum - req_sum) if bulk_sum  is not None else None
-        wheel_surp = (wheel_sum - req_sum) if wheel_sum is not None else None
+        # raw sums (may be floats)
+        raw_req = total_req[grp_rates].sum() if grp_rates else 0
+        raw_cap = total_cap[grp_caps].sum()   if grp_caps  else 0
 
-        # Deficit subtypes if group is overall deficit
+        # apply ceil & floor
+        req_int    = math.ceil(raw_req)
+        cap_int    = math.floor(raw_cap)
+        surplus_int = cap_int - req_int
+
+        # bulk vs wheeled for CL_III
+        bulk_cols  = [c for c in grp_caps if "_bulk_cap" in c]
+        wheel_cols = [c for c in grp_caps if "_wheeled_cap" in c]
+        raw_bulk   = total_cap[bulk_cols].sum()  if bulk_cols  else None
+        raw_wheel  = total_cap[wheel_cols].sum() if wheel_cols else None
+
+        bulk_int   = math.floor(raw_bulk)  if raw_bulk   is not None else None
+        wheel_int  = math.floor(raw_wheel) if raw_wheel  is not None else None
+
+        bulk_sur   = (bulk_int - req_int)   if bulk_int   is not None else None
+        wheel_sur  = (wheel_int - req_int)  if wheel_int  is not None else None
+
+        # only list deficits if overall surplus < 0
         deficit = []
-        if surplus < 0:
+        if surplus_int < 0:
             for rate in grp_rates:
-                base = rate.replace(RATE_SUFFIX,"")
+                base = rate.replace(RATE_SUFFIX, "")
                 cap_matches = [c for c in sel_caps if c.startswith(base)]
-                if total_req[rate] > sum(total_cap[c] for c in cap_matches):
+                # sum those caps, floor them too
+                raw_c = sum(total_cap[c] for c in cap_matches)
+                cap_i = math.floor(raw_c)
+                if math.ceil(total_req[rate]) > cap_i:
                     deficit.append(base)
 
         row = {
             "Group": grp,
-            "Requirement": req_sum,
-            "Capacity":    cap_sum,
-            "Surplus/(Deficit)": surplus,
+            "Requirement": req_int,
+            "Capacity":    cap_int,
+            "Surplus/(Deficit)": surplus_int,
             "Deficit Subtypes": ", ".join(deficit) if deficit else "-"
         }
-        if bulk_sum is not None:
-            row["Bulk Cap"]    = bulk_sum
-            row["Bulk Surplus"] = bulk_surp
-        if wheel_sum is not None:
-            row["Wheeled Cap"]     = wheel_sum
-            row["Wheeled Surplus"] = wheel_surp
+        if bulk_int is not None:
+            row["Bulk Cap"]     = bulk_int
+            row["Bulk Surplus"] = bulk_sur
+        if wheel_int is not None:
+            row["Wheeled Cap"]     = wheel_int
+            row["Wheeled Surplus"] = wheel_sur
 
         rows.append(row)
 
-    return pd.DataFrame(rows).set_index("Group")
+return pd.DataFrame(rows).set_index("Group")
+
 
 def fmt_parenthesis(x):
-    """Format number with commas; negatives in parentheses, rounding before display."""
+    """Format an integer with commas and parentheses for negatives."""
     if pd.isna(x):
         return "-"
-    # round to nearest integer before formatting
-    v = round(x)
-    return f"({abs(v):,})" if v < 0 else f"{v:,}"
+    # x is assumed int already
+    return f"({abs(x):,})" if x < 0 else f"{x:,}"
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
