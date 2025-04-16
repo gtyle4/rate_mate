@@ -7,6 +7,7 @@ import os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import math
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants & Version
@@ -80,45 +81,38 @@ def group_prefix(col):
     return col.split("_")[0]               # e.g. Javelin, 105mm
 
 def build_group_summary(total_req, total_cap, sel_rates, sel_caps):
-"""Build DataFrame summarizing by prefix group with ceil/floor logic."""
     groups = sorted({ group_prefix(c) for c in sel_rates + sel_caps })
     rows = []
     for grp in groups:
-        # pick all matching rate/cap columns
         grp_rates = [c for c in sel_rates if group_prefix(c)==grp]
         grp_caps  = [c for c in sel_caps  if group_prefix(c)==grp]
 
-        # raw sums (may be floats)
         raw_req = total_req[grp_rates].sum() if grp_rates else 0
         raw_cap = total_cap[grp_caps].sum()   if grp_caps  else 0
 
-        # apply ceil & floor
-        req_int    = math.ceil(raw_req)
-        cap_int    = math.floor(raw_cap)
+        # BOTH floored
+        req_int     = math.floor(raw_req)
+        cap_int     = math.floor(raw_cap)
         surplus_int = cap_int - req_int
 
-        # bulk vs wheeled for CL_III
-        bulk_cols  = [c for c in grp_caps if "_bulk_cap" in c]
-        wheel_cols = [c for c in grp_caps if "_wheeled_cap" in c]
-        raw_bulk   = total_cap[bulk_cols].sum()  if bulk_cols  else None
-        raw_wheel  = total_cap[wheel_cols].sum() if wheel_cols else None
+        # CL_III bulk/vwhe en detail (also floor)
+        bulk_keys  = [c for c in grp_caps if "_bulk_cap"    in c]
+        wheel_keys = [c for c in grp_caps if "_wheeled_cap" in c]
+        bulk_int   = math.floor(total_cap[bulk_keys].sum())   if bulk_keys  else None
+        wheel_int  = math.floor(total_cap[wheel_keys].sum())  if wheel_keys else None
+        bulk_sur   = bulk_int - req_int if bulk_int   is not None else None
+        wheel_sur  = wheel_int - req_int if wheel_int  is not None else None
 
-        bulk_int   = math.floor(raw_bulk)  if raw_bulk   is not None else None
-        wheel_int  = math.floor(raw_wheel) if raw_wheel  is not None else None
-
-        bulk_sur   = (bulk_int - req_int)   if bulk_int   is not None else None
-        wheel_sur  = (wheel_int - req_int)  if wheel_int  is not None else None
-
-        # only list deficits if overall surplus < 0
+        # Deficit only if group deficit
         deficit = []
         if surplus_int < 0:
             for rate in grp_rates:
-                base = rate.replace(RATE_SUFFIX, "")
+                base = rate.replace(RATE_SUFFIX,"")
                 cap_matches = [c for c in sel_caps if c.startswith(base)]
-                # sum those caps, floor them too
                 raw_c = sum(total_cap[c] for c in cap_matches)
                 cap_i = math.floor(raw_c)
-                if math.ceil(total_req[rate]) > cap_i:
+                req_i = math.floor(total_req[rate])
+                if req_i > cap_i:
                     deficit.append(base)
 
         row = {
@@ -137,7 +131,8 @@ def build_group_summary(total_req, total_cap, sel_rates, sel_caps):
 
         rows.append(row)
 
-return pd.DataFrame(rows).set_index("Group")
+    return pd.DataFrame(rows).set_index("Group")
+
 
 
 def fmt_parenthesis(x):
@@ -225,19 +220,26 @@ if st.checkbox("Show bar chart of grouped summary"):
     st.bar_chart(group_df[["Requirement","Capacity"]])
 
 # Detailed Subtype Summary
-with st.expander("Detailed Subtype Summary"):
+with st.expander("🔍 Detailed Subtype Summary"):
     comp_rows = []
     for rate in selected_rates:
         base = rate.replace(RATE_SUFFIX, "")
         caps = [c for c in selected_caps if c.startswith(base)]
-        cap_sum = sum(total_cap[c] for c in caps)
-        req_val = total_req[rate]
+        raw_req = total_req[rate]
+        raw_cap = sum(total_cap[c] for c in caps)
+
+        # BOTH floored
+        req_i     = math.floor(raw_req)
+        cap_i     = math.floor(raw_cap)
+        surplus_i = cap_i - req_i
+
         comp_rows.append({
             "Subtype": base,
-            "Requirement": req_val,
-            "Capacity":    cap_sum,
-            "Surplus/(Deficit)": cap_sum - req_val
+            "Requirement": req_i,
+            "Capacity":    cap_i,
+            "Surplus/(Deficit)": surplus_i
         })
+
     comp_df = pd.DataFrame(comp_rows).set_index("Subtype")
     st.table(comp_df.applymap(fmt_parenthesis))
 
