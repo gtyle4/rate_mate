@@ -126,11 +126,13 @@ def build_group_summary(total_req, total_cap, sel_rates, sel_caps):
     return pd.DataFrame(rows).set_index("Group")
 
 def fmt_parenthesis(x):
-    """Format number with commas; negative in parentheses."""
+    """Format number with commas; negatives in parentheses, rounding before display."""
     if pd.isna(x):
         return "-"
-    i = int(x)
-    return f"({abs(i):,})" if i < 0 else f"{i:,}"
+    # round to nearest integer before formatting
+    v = round(x)
+    return f"({abs(v):,})" if v < 0 else f"{v:,}"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Load data
